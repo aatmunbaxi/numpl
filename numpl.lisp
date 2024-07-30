@@ -1,6 +1,7 @@
 (defpackage :numpl
-  (:use :common-lisp :petalisp :petalisp.core
-   :alexandria)
+  (:use
+   :common-lisp
+   :petalisp)
   (:local-nicknames (nil :petalisp)
                     (:ax :alexandria)))
 
@@ -27,8 +28,8 @@
 
 
 
-;; TODO add type checks to array functions
 ;;; Array creation routines
+;;;; Prefilled arrays
 (defun zeros (shape &optional (element-type 'integer))
   "Return lazy-array full of zeros with shape SHAPE"
   (lazy-reshape (coerce 0 element-type) shape))
@@ -43,16 +44,6 @@
     (setf element-type (type-of fill-value)))
   (lazy-reshape (coerce fill-value element-type) shape))
 
-(defun cyclically-shift (arr num axis)
-  "Cyclically shift elements of array ARR along AXIS, NUM times."
-  (with-lazy-arrays (arr)
-    (when (>= axis (length (lazy-array-dimensions arr)))
-      (error "Invalid axis ~S for shape ~S." axis (lazy-array-dimensions arr)))
-    (let* ((dims (lazy-array-dimensions arr))
-           (axis-len (nth axis dims))
-           (split-point (mod (- axis-len num) axis-len)))
-      (lazy-stack axis (lazy-slices arr (range split-point axis-len) axis)
-                  (lazy-slices arr (range 0 split-point) axis)))))
 
 
 (defun random-array (shape &optional (limit 256) (element-type nil))
@@ -68,59 +59,7 @@ with limit LIMIT."
     (lazy (lambda (x) (coerce x element-type)) array)))
 
 
-
-(defun negative-shift-down-factor-p (i times axis)
-  (and (= i axis) (< times 0)))
-(defun positive-shift-down-factor-p (i times axis)
-  (and (= i axis) (>= times 0)))
-
-;; TODO; Certainly one of the functions of all time...
-;; REVIEW; why not use `peeling-reshaper' here?
-(defun shift-entries (arr &key (axis 0) (times 1) (fill-value 0))
-  "Shift elements on axis AXIS of unstrided array away from zero index position;
-fill vacated spots with FILL-VALUE and return an unstrided
-array of the same shape. TIMES may be negative.
-
-The array MUST be unstrided, i.e. of shape (~ N ~ M ~ K ...) where there
-is only one integer after each `~'.
-
-A positive TIMES value would shift away from the zero index, and a negative value
-would shift towards the zero index."
-  (with-lazy-arrays (arr)
-    (let* ((dimensions (shape arr))
-           (axis-len (nth axis (shape arr)))
-           (fill-shape   (loop for num in dimensions
-                               for i in (iota (ndim arr))
-                               append (cond
-                                        ((positive-shift-down-factor-p i times  axis)
-                                         `(~ 0 ,times))
-
-                                        ((negative-shift-down-factor-p i times axis)
-                                         `(~ ,(+ axis-len times) ,axis-len))
-                                        (t `(~ ,num)))))
-           (axis-labels  (gen-axis-labels arr)))
-      (setf (nth axis axis-labels) `( ,(car (nth axis axis-labels)) .
-                                      (+ ,times ,(car (nth axis axis-labels)))))
-      (lazy-reshape
-       (lazy-fuse-and-harmonize (full (eval fill-shape) fill-value)
-                                (lazy-reshape arr (eval `(transform ,@(mapcar #'car axis-labels)
-                                                                    to
-                                                                    ,@(mapcar #'cdr axis-labels)))))
-       (lazy-array-shape arr)))))
-
-
-
-
 ;; TODO write eye function
-(defun eye (N &optional (M nil) (k 0))
-  "Return 2D lazy-array with ones on diagnoal, zeros elsewhere."
-  (unless M
-    (setf M N))
-  (let ((max-dim (max N M))
-        (min-dim (min N M))
-        (stack-axis (if (= min-dim N)
-                        0
-                        1)))))
 
 
 (defun zeros-like (arr &optional (element-type nil))
@@ -146,18 +85,41 @@ would shift towards the zero index."
     (lazy-reshape (coerce fill-value element-type) (lazy-array-shape arr))))
 
 
-;; REVIEW: maybe just don't? `lazy-stack' seems perfectly capable here
-(defun lazy-concat (arrs &optional (axis 0))
-  "Concatenate arrays in list ARRS along AXIS.
+(defun array-coordinate-grid (shape)
+  "Return lazy array whose elements are lists (i j k .. ) where i, j, k, ... etc.
+are the coordinates at that point of the array with shape SHAPE."
+  (apply #'lazy #'list (loop for axis
+                               below (shape-rank shape)
+                             collect
+                             (lazy-index-components shape axis))))
 
-Arrays in ARRS must have equal dimensions in all places
-except AXIS. Array are harmonized before concatenation.
 
-Numpy has lots of redundant ways to stack/concatenate
-arrays, but only one generic one composing `petalisp:lazy-stack' is needed."
-  (with-lazy-arrays (arrs)
-    (apply #'lazy-stack axis (lazy-harmonize-list-of-arrays arrs))))
+;;;;; Arrays with ranges
+(defun arange (stop &key (start 0)  (num 50))
+  "Return lazy endpoint-exclusive, evenly-spaced range of numbers, starting from START
+and ending at STOP, of shape (~ NUM)."
+  (let ((step (/ (- stop start) num)))
+    (lazy #'+
+     (lazy #'*
+      (lazy-index-components (~ num))
+      (full (~ num) step))
+     (full (~ num) start))))
 
+(defun linspace (start stop &key (num 50) (endpoint 't)  (retstep nil))
+  (let* ((step (/ (- stop start) (if endpoint (1- num)  num)))
+         (end-ind (if endpoint  num (1- num)))
+         (space (lazy #'+
+                 (lazy #'*
+                  (lazy-index-components (~ end-ind))
+                  (full (~ end-ind) step))
+                 (full (~ end-ind) start))))
+    (if retstep
+        `( ,space . ,step)
+        space)))
+
+(defun logspace (start stop &key (num 50) (endpoint 't) (base 10.0))
+  (lazy (lambda (x) (expt base x))
+   (linspace start stop :num num :endpoint endpoint :retstep nil)))
 
 
 
@@ -190,7 +152,93 @@ use `(gen-axis-labels ARR (lambda (i) (+ i k))))'"
               ,(intern (concatenate 'string prefix (string
                                                     (format nil "~A" (mod (funcall trans index) num-axes))))))))))
 
+(defun negative-shift-down-factor-p (i times axis)
+  (and (= i axis) (< times 0)))
+(defun positive-shift-down-factor-p (i times axis)
+  (and (= i axis) (>= times 0)))
+
+
+
+
 ;;;; Exported functions
+
+;; REVIEW: maybe just don't? `lazy-stack' seems perfectly capable here
+(defun lazy-concat (arrs &optional (axis 0))
+  "Concatenate arrays in list ARRS along AXIS.
+
+Arrays in ARRS must have equal dimensions in all places
+except AXIS. Array are harmonized before concatenation.
+
+Numpy has lots of redundant ways to stack/concatenate
+arrays, but only one generic one composing `petalisp:lazy-stack' is needed."
+  (with-lazy-arrays (arrs)
+    (apply #'lazy-stack axis (lazy-harmonize-list-of-arrays arrs))))
+
+
+
+
+;; TODO; Certainly one of the functions of all time...
+;; REVIEW; why not use `peeling-reshaper' here?
+;;         for `peeling-reshaper' it is an error to peel
+;;         off more layers than the array has, but it might
+;;         be fine to allow for the user to shift beyond
+;;         the number of array entries
+(defun shift-entries (arr &key (axis 0) (times 1) (fill-value 0))
+  "Shift elements on axis AXIS of unstrided array away from zero index position;
+fill vacated spots with FILL-VALUE and return an unstrided
+array of the same shape. TIMES may be negative.
+
+The array MUST be unstrided, i.e. of shape (~ N ~ M ~ K ...) where there
+is only one integer after each `~'.
+
+A positive TIMES value would shift away from the zero index, and a negative value
+would shift towards the zero index."
+  (assert (not (= 0 times)))
+  (with-lazy-arrays (arr)
+    (let* ((dimensions (shape arr))
+           (axis-len (nth axis (shape arr)))
+           (fill-shape (apply #'~*
+                              (loop for num in dimensions
+                                    for i in (alexandria:iota (ndim arr))
+                                    collect (cond
+                                              ((positive-shift-down-factor-p i times  axis)
+                                               (range 0 times))
+                                              ((negative-shift-down-factor-p i times axis)
+                                               (range (+ axis-len times) axis-len))
+                                              (t (range num))))))
+
+           (offsets (make-array (ndim arr) :initial-contents (loop repeat (ndim arr) collect 0 ))))
+      (setf (aref offsets axis) times)
+
+      (lazy-reshape
+       (lazy-fuse-and-harmonize (full (eval fill-shape) fill-value)
+                                (lazy-reshape arr (make-transformation
+                                                   :offsets offsets )))
+       (lazy-array-shape arr)))))
+
+
+
+(defun cyclically-shift (arr num axis)
+  "Cyclically shift elements of array ARR along AXIS, NUM times."
+  (with-lazy-arrays (arr)
+    (when (>= axis (length (lazy-array-dimensions arr)))
+      (error "Invalid axis ~S for shape ~S." axis (lazy-array-dimensions arr)))
+    (let* ((dims (lazy-array-dimensions arr))
+           (axis-len (nth axis dims))
+           (split-point (mod (- axis-len num) axis-len)))
+      (lazy-stack axis (lazy-slices arr (range split-point axis-len) axis)
+                  (lazy-slices arr (range 0 split-point) axis)))))
+
+
+
+
+(defun identity-matrix (N)
+  (apply #'lazy-stack 0 (loop for i below N
+                              collect
+                              (lazy-overwrite (zeros (~ i (1+ i) ~ N))
+                                              (lazy-reshape 1 (~ i (1+ i) ~ i (1+ i)))))))
+
+
 (defun permute-dims (arr &optional (perm nil))
   "Permute axes of ARR according to permutation PERM.
 
@@ -202,11 +250,13 @@ e.g. (permute-dims (ones (~ 2 ~ 3 ~ 4)) '(0 2 1)) will
 swap the last two axes."
   (with-lazy-arrays (arr)
     (unless perm
-      (setf perm  (reverse (ax:iota (ndim arr)))))
-    (let* ((mapping-alist (gen-axis-labels arr (gen-permutation perm))))
-      (lazy-reshape arr  (eval `(transform ,@(mapcar #'car mapping-alist)
-                                           to
-                                           ,@(mapcar #'cdr mapping-alist)))))))
+      (setf perm (reverse (alexandria:iota (ndim arr)))))
+    (lazy-reshape arr (petalisp.api:make-transformation
+                       :output-mask (make-array
+                                     (length perm)
+                                     :initial-contents perm)))))
+
+
 
 (defun transpose (arr)
   "Return transpose of array.
@@ -223,31 +273,28 @@ Peforms `swap-axes' on the last two dimensions of ND array, which
 should form KxL matrices (i.e shape `(... ~ K ~ L)')"
   (with-lazy-arrays (arr)
     (assert (>= (ndim arr) 2) nil "Cannot matrix transpose an array of rank less than 2.")
-    (flet ((swap-last-two (x) (cond ((= x (1- (ndim arr)))
-                                     (1- x))
-                                    ((= x (- 2 (ndim arr)))
-                                     (1+ x))
-                                    (t x))))
-      (let ((perm  (gen-axis-labels arr  #'swap-last-two )))
-        (lazy-reshape arr  (eval `(transform ,@(mapcar #'car perm) to ,@(mapcar #'cdr perm))))))))
+    (let ((len (ndim arr))
+          (trans-vec (make-array (ndim arr)
+                                 :initial-contents
+                                 (alexandria:iota (ndim arr)))))
+      (setf (aref trans-vec (- len 2))  (- len 1))
+      (setf (aref trans-vec (- len 1)) (- len 2))
+      (lazy-reshape arr  (make-transformation
+                          :output-mask trans-vec)))))
 
 (defun swap-axes (arr axis1 axis2)
   "Interchange axes of ARR.
 
 E.g. on a 2D array, this corresponds to the matrix transpose."
   (with-lazy-arrays (arr)
-    (let* ((num-axes (length (lazy-array-dimensions arr)))
-           (original-indexes (gen-axis-labels arr))
-           (after-indexes (loop for index
-                                  below num-axes
-                                collect
-                                ;; HACK maybe reduce this to one list to avoid iterating twice?
-                                (cond ((= index axis1)
-                                       (intern (concatenate 'string "a" (format nil "~A" axis2))))
-                                      ((= index axis2)
-                                       (intern (concatenate 'string "a"  (format nil "~A" axis1))))
-                                      (t (intern (concatenate 'string "a"  (format nil "~A" index))))))))
-      (lazy-reshape arr  (eval `(transform ,@original-indexes to ,@after-indexes))))))
+    (let ((trans-vec (make-array (ndim arr)
+                                 :initial-contents
+                                 (alexandria:iota (ndim arr)))))
+      (setf (aref trans-vec axis1) axis2)
+      (setf (aref trans-vec axis2) axis1)
+      (lazy-reshape arr  (make-transformation
+                          :output-mask trans-vec )))))
+
 
 
 (defun flip (arr &key (axis 'all))
@@ -259,13 +306,15 @@ If AXIS is `all', flip elements along all axes."
     (let* ((axes-to-flip (cond
                            ((integerp axis) `(,axis))
                            ((equal axis 'all)
-                            (ax:iota (ndim arr)))))
-           (axis-labels (gen-axis-labels arr)))
-      (loop for pair in axis-labels
-            for i in (iota (ndim arr)) do
-              (if (member i axes-to-flip)
-                  (setf (cdr pair) `(- ,(cdr pair)))))
-      (lazy-reshape arr  (eval `(transform ,@(mapcar #'car axis-labels) to ,@(mapcar #'cdr axis-labels)))))))
+                            (alexandria:iota (ndim arr)))))
+           (scalings (make-array (ndim arr)
+                                 :initial-contents
+                                 (loop for axis
+                                         below (ndim arr)
+                                       collect
+                                       (if (member axis axes-to-flip)
+                                           -1
+                                           1)))))
 
-
-
+      (lazy-reshape arr (make-transformation :scalings scalings)
+       (lazy-array-shape arr)))))
