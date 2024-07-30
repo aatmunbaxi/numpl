@@ -125,32 +125,6 @@ and ending at STOP, of shape (~ NUM)."
 
 ;;; Array manipulation
 ;;;; Helper functions
-(defun gen-permutation (perm)
-  "Generate mapping from permutation to be passed to `gen-axis-labels'.
-PERM is a list of indexes equinumerous to the number of axes
-to permute, where each position in PERM reflects the final position of
-the axis."
-  (lambda (x) (nth x perm)))
-
-(defun gen-axis-labels (arr &optional (trans 'identity) (prefix "a"))
-  "Generate alist of axis labels corresponding to a trans
-of axis numberings to be passed to `petalisp.transform'
-
-trans should be a function taking in an integer from 0..N
-where N is the rank of ARR which is bijective modulo N.
-
-e.g. to shift the axis labels cyclically to the right by K places,
-use `(gen-axis-labels ARR (lambda (i) (+ i k))))'"
-  (with-lazy-arrays (arr)
-    (let ((num-axes (length (lazy-array-dimensions arr))))
-      (loop for index
-              below num-axes
-            collect
-            `(,(intern (concatenate 'string prefix (string
-                                                    (format nil "~A" index))))
-              .
-              ,(intern (concatenate 'string prefix (string
-                                                    (format nil "~A" (mod (funcall trans index) num-axes))))))))))
 
 (defun negative-shift-down-factor-p (i times axis)
   (and (= i axis) (< times 0)))
