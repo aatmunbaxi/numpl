@@ -1,9 +1,37 @@
 (defpackage :numpl
   (:use
    :common-lisp
+   :alexandria
    :petalisp)
   (:local-nicknames (nil :petalisp)
-                    (:ax :alexandria)))
+                    (:ax :alexandria))
+  (:export
+   ;; Array properties
+   #:ndim
+   #:shape
+   #:size
+   ;; Array creation
+   #:zeros
+   #:ones
+   #:full
+   #:random-array
+   #:zeros-like
+   #:ones-like
+   #:full-like
+   #:array-coordinate-grid
+   #:identity-matrix
+   #:arange
+   #:linspace
+   #:logspace
+   ;; Array manipulation
+   #:lazy-concat
+   #:shift-entries
+   #:cyclically-shift
+   #:permute-dims
+   #:transpose
+   #:matrix-transpose
+   #:swap-axes
+   #:flip))
 
 (in-package :numpl)
 
@@ -94,6 +122,12 @@ are the coordinates at that point of the array with shape SHAPE."
                              (lazy-index-components shape axis))))
 
 
+(defun identity-matrix (N)
+  (apply #'lazy-stack 0 (loop for i below N
+                              collect
+                              (lazy-overwrite (zeros (~ i (1+ i) ~ N))
+                                              (lazy-reshape 1 (~ i (1+ i) ~ i (1+ i)))))))
+
 ;;;;; Arrays with ranges
 (defun arange (stop &key (start 0)  (num 50))
   "Return lazy endpoint-exclusive, evenly-spaced range of numbers, starting from START
@@ -151,7 +185,6 @@ arrays, but only one generic one composing `petalisp:lazy-stack' is needed."
 
 
 
-;; TODO; Certainly one of the functions of all time...
 ;; REVIEW; why not use `peeling-reshaper' here?
 ;;         for `peeling-reshaper' it is an error to peel
 ;;         off more layers than the array has, but it might
@@ -172,8 +205,9 @@ would shift towards the zero index."
     (let* ((dimensions (shape arr))
            (axis-len (nth axis (shape arr)))
            (fill-shape (apply #'~*
-                              (loop for num in dimensions
-                                    for i in (alexandria:iota (ndim arr))
+                              (loop for num
+                                      in dimensions
+                                    for i in (ax:iota (ndim arr))
                                     collect (cond
                                               ((positive-shift-down-factor-p i times  axis)
                                                (range 0 times))
@@ -185,7 +219,7 @@ would shift towards the zero index."
       (setf (aref offsets axis) times)
 
       (lazy-reshape
-       (lazy-fuse-and-harmonize (full (eval fill-shape) fill-value)
+       (lazy-fuse-and-harmonize (full  fill-shape fill-value)
                                 (lazy-reshape arr (make-transformation
                                                    :offsets offsets )))
        (lazy-array-shape arr)))))
@@ -204,15 +238,6 @@ would shift towards the zero index."
                   (lazy-slices arr (range 0 split-point) axis)))))
 
 
-
-
-(defun identity-matrix (N)
-  (apply #'lazy-stack 0 (loop for i below N
-                              collect
-                              (lazy-overwrite (zeros (~ i (1+ i) ~ N))
-                                              (lazy-reshape 1 (~ i (1+ i) ~ i (1+ i)))))))
-
-
 (defun permute-dims (arr &optional (perm nil))
   "Permute axes of ARR according to permutation PERM.
 
@@ -224,7 +249,7 @@ e.g. (permute-dims (ones (~ 2 ~ 3 ~ 4)) '(0 2 1)) will
 swap the last two axes."
   (with-lazy-arrays (arr)
     (unless perm
-      (setf perm (reverse (alexandria:iota (ndim arr)))))
+      (setf perm (reverse (ax:iota (ndim arr)))))
     (lazy-reshape arr (petalisp.api:make-transformation
                        :output-mask (make-array
                                      (length perm)
@@ -248,26 +273,26 @@ should form KxL matrices (i.e shape `(... ~ K ~ L)')"
   (with-lazy-arrays (arr)
     (assert (>= (ndim arr) 2) nil "Cannot matrix transpose an array of rank less than 2.")
     (let ((len (ndim arr))
-          (trans-vec (make-array (ndim arr)
-                                 :initial-contents
-                                 (alexandria:iota (ndim arr)))))
-      (setf (aref trans-vec (- len 2))  (- len 1))
-      (setf (aref trans-vec (- len 1)) (- len 2))
+          (output-mask (make-array (ndim arr)
+                                   :initial-contents
+                                   (ax:iota (ndim arr)))))
+      (setf (aref output-mask (- len 2))  (- len 1))
+      (setf (aref output-mask (- len 1)) (- len 2))
       (lazy-reshape arr  (make-transformation
-                          :output-mask trans-vec)))))
+                          :output-mask output-mask)))))
 
 (defun swap-axes (arr axis1 axis2)
   "Interchange axes of ARR.
 
 E.g. on a 2D array, this corresponds to the matrix transpose."
   (with-lazy-arrays (arr)
-    (let ((trans-vec (make-array (ndim arr)
-                                 :initial-contents
-                                 (alexandria:iota (ndim arr)))))
-      (setf (aref trans-vec axis1) axis2)
-      (setf (aref trans-vec axis2) axis1)
+    (let ((output-mask (make-array (ndim arr)
+                                   :initial-contents
+                                   (ax:iota (ndim arr)))))
+      (setf (aref output-mask axis1) axis2)
+      (setf (aref output-mask axis2) axis1)
       (lazy-reshape arr  (make-transformation
-                          :output-mask trans-vec )))))
+                          :output-mask output-mask )))))
 
 
 
@@ -280,7 +305,7 @@ If AXIS is `all', flip elements along all axes."
     (let* ((axes-to-flip (cond
                            ((integerp axis) `(,axis))
                            ((equal axis 'all)
-                            (alexandria:iota (ndim arr)))))
+                            (ax:iota (ndim arr)))))
            (scalings (make-array (ndim arr)
                                  :initial-contents
                                  (loop for axis
