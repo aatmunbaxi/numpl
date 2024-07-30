@@ -1,5 +1,3 @@
-(ql:quickload :petalisp)
-
 (defpackage :numpl
   (:use :common-lisp :petalisp :petalisp.core
    :alexandria)
@@ -7,6 +5,27 @@
                     (:ax :alexandria)))
 
 (in-package :numpl)
+
+
+
+;;; Array properties
+(defun ndim (arr)
+  "Return number of dimensions for ARR"
+  (with-lazy-arrays (arr)
+    (lazy-array-rank arr)))
+
+(defun shape (arr)
+  "Return shape of ARR."
+  (with-lazy-arrays (arr)
+    (lazy-array-dimensions arr)))
+
+(defun size (arr &optional (axis 0))
+  "Return number of elements along a given axis"
+  (with-lazy-arrays (arr)
+    (nth axis (lazy-array-dimensions arr))))
+
+
+
 
 ;; TODO add type checks to array functions
 ;;; Array creation routines
@@ -39,12 +58,14 @@
 (defun random-array (shape &optional (limit 256) (element-type nil))
   "Return lazy-array with SHAPE full of random values
 with limit LIMIT."
-  (let* ((element-type (unless element-type (type-of limit)))
-         (array (make-array (shape-dimensions shape) :element-type element-type)))
+  (let* ((element-type (unless element-type (typecase (type-of limit)
+                                              (list (car (type-of limit)))
+                                              (symbol (type-of limit)))))
+         (array (make-array (shape-dimensions shape) )))
     (loop for index below (array-total-size array) do
       (setf (row-major-aref array index)
             (random limit)))
-    (lazy-array array)))
+    (lazy (lambda (x) (coerce x element-type)) array)))
 
 
 
@@ -95,7 +116,11 @@ would shift towards the zero index."
   "Return 2D lazy-array with ones on diagnoal, zeros elsewhere."
   (unless M
     (setf M N))
-  (let ((max-dim (max N M)))))
+  (let ((max-dim (max N M))
+        (min-dim (min N M))
+        (stack-axis (if (= min-dim N)
+                        0
+                        1)))))
 
 
 (defun zeros-like (arr &optional (element-type nil))
@@ -130,7 +155,7 @@ except AXIS. Array are harmonized before concatenation.
 
 Numpy has lots of redundant ways to stack/concatenate
 arrays, but only one generic one composing `petalisp:lazy-stack' is needed."
-  (with-lazy-arrays ('arrs)
+  (with-lazy-arrays (arrs)
     (apply #'lazy-stack axis (lazy-harmonize-list-of-arrays arrs))))
 
 
@@ -244,18 +269,3 @@ If AXIS is `all', flip elements along all axes."
 
 
 
-;;; Array properties
-(defun ndim (arr)
-  "Return number of dimensions for ARR"
-  (with-lazy-arrays (arr)
-    (lazy-array-rank arr)))
-
-(defun shape (arr)
-  "Return shape of ARR."
-  (with-lazy-arrays (arr)
-    (lazy-array-dimensions arr)))
-
-(defun size (arr &optional (axis 0))
-  "Return number of elements along a given axis"
-  (with-lazy-arrays (arr)
-    (nth axis (lazy-array-dimensions arr))))
