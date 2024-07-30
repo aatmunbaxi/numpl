@@ -1,0 +1,15 @@
+#+title: cl-numpl
+#+subtitle: numpy-flavored incants for Petalisp
+
+#+begin_quote
+⚠ This is a free time project that is better considered as an exercise done by a beginner in common lisp! No guarantees of quality/correctness are made.
+#+end_quote
+
+Yes, I'm aware of =numcl=, no, this is not a rewrite (I think).
+
+Numpy is, for better or for worse, the torch-bearer among high level APIs for low level array manipulations.
+I found [[https://github.com/marcoheisig/Petalisp][Petalisp]] intriguing due to its highly aggressive, highly optimized JIT compiler, and I wanted to learn the yoga of lazy array manipulations to see if it had a place among those high level APIs.
+(Really, it already does because of the common lisp platform it sits upon and the development experience that entails.)
+
+This is a WIP, /limited/ port of numpy written *as an exercise* so that I might learn how to use Petalisp.
+You should not consider it suitable for use in any project, since stability and correctness are not guaranteed.
